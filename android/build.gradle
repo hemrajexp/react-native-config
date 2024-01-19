@@ -1,3 +1,5 @@
+import java.nio.file.Paths
+
 buildscript {
     repositories {
         mavenCentral()
@@ -15,7 +17,78 @@ def safeExtGet(prop, fallback) {
     rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
 }
 
+def findNodeModulePath(baseDir, packageName) {
+    def basePath = baseDir.toPath().normalize()
+    // Node's module resolution algorithm searches up to the root directory,
+    // after which the base path will be null
+    while (basePath) {
+        def candidatePath = Paths.get(basePath.toString(), "node_modules", packageName)
+        if (candidatePath.toFile().exists()) {
+            return candidatePath.toString()
+        }
+        basePath = basePath.getParent()
+    }
+    return null
+}
+
+def resolveReactNativeDirectory() {
+    def reactNative = file("${findNodeModulePath(rootProject.projectDir, "react-native")}")
+    if (reactNative.exists()) {
+        return reactNative
+    }
+
+    throw new Exception(
+            "[react-native-config] Unable to resolve react-native location in " +
+                    "node_modules. You should add project extension property (in app/build.gradle) " +
+                    "`REACT_NATIVE_NODE_MODULES_DIR` with path to react-native."
+    )
+}
+
+def REACT_NATIVE_DIR = resolveReactNativeDirectory()
+
+def reactProperties = new Properties()
+file("$REACT_NATIVE_DIR/ReactAndroid/gradle.properties").withInputStream { reactProperties.load(it) }
+
+def REACT_NATIVE_VERSION = reactProperties.getProperty("VERSION_NAME")
+def REACT_NATIVE_MINOR_VERSION = REACT_NATIVE_VERSION.startsWith("0.0.0-") ? 1000 : REACT_NATIVE_VERSION.split("\\.")[1].toInteger()
+
+def isNewArchitectureEnabled() {
+    // To opt-in for the New Architecture, you can either:
+    // - Set `newArchEnabled` to true inside the `gradle.properties` file
+    // - Invoke gradle with `-newArchEnabled=true`
+    // - Set an environment variable `ORG_GRADLE_PROJECT_newArchEnabled=true`
+    return project.hasProperty("newArchEnabled") && project.newArchEnabled == "true"
+}
+
+if (isNewArchitectureEnabled()) {
+    apply plugin: "com.facebook.react"
+}
+
+def agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION.tokenize('.')[0].toInteger()
+def shouldUseNameSpace = agpVersion >= 7 && REACT_NATIVE_MINOR_VERSION >= 71
+def PACKAGE_PROP = "package=\"com.lugg.RNCConfig\""
+def manifestOutFile = file("${projectDir}/src/main/AndroidManifest.xml")
+def manifestContent = manifestOutFile.getText()
+if(shouldUseNameSpace){
+    manifestContent = manifestContent.replaceAll(
+            PACKAGE_PROP,
+            ''
+    )
+} else {
+    if(!manifestContent.contains("$PACKAGE_PROP")){
+        manifestContent = manifestContent.replace(
+                '<manifest',
+                "<manifest $PACKAGE_PROP "
+        )
+    }
+}
+manifestContent.replaceAll("  ", " ")
+manifestOutFile.write(manifestContent)
+
 android {
+    if(shouldUseNameSpace){
+        namespace = "com.lugg.RNCConfig"
+    }
     compileSdkVersion rootProject.ext.compileSdkVersion
 
     defaultConfig {
@@ -23,7 +96,13 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+    }.
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
+
     lintOptions {
         abortOnError false
     }

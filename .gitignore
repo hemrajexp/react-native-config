@@ -4,3 +4,6 @@ node_modules
 xcuserdata
 xcshareddata
 /.idea/
+android/local.properties
+android/.idea/
+android/.gradle
